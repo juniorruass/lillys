@@ -25,18 +25,18 @@ $LocalPath = $PSScriptRoot
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Ok($msg)   { Write-Host "    $msg" -ForegroundColor Green }
 function Fail($msg) { Write-Host "`nERRO: $msg" -ForegroundColor Red; exit 1 }
-function Invoke-Remote { param($cmd); ssh -i $KeyFile -o StrictHostKeyChecking=no $VPS $cmd }
+function Invoke-Remote { param($cmd); ssh -4 -i $KeyFile -o StrictHostKeyChecking=no $VPS $cmd }
 
 function Check-SSH {
     Step "Conectando em $VPS..."
-    $r = ssh -i $KeyFile -o ConnectTimeout=10 -o StrictHostKeyChecking=no $VPS "echo ok" 2>&1
+    $r = ssh -4 -i $KeyFile -o ConnectTimeout=10 -o StrictHostKeyChecking=no $VPS "echo ok" 2>&1
     if ($LASTEXITCODE -ne 0) { Fail "SSH falhou. Chave: $KeyFile" }
     Ok "Conectado."
 }
 
-if ($Ssh)     { ssh -i $KeyFile -o StrictHostKeyChecking=no $VPS; exit 0 }
+if ($Ssh)     { ssh -4 -i $KeyFile -o StrictHostKeyChecking=no $VPS; exit 0 }
 if ($Status)  { Check-SSH; Invoke-Remote "pm2 show lillys"; exit 0 }
-if ($Logs)    { Check-SSH; ssh -i $KeyFile -o StrictHostKeyChecking=no $VPS "pm2 logs lillys --lines 80"; exit 0 }
+if ($Logs)    { Check-SSH; ssh -4 -i $KeyFile -o StrictHostKeyChecking=no $VPS "pm2 logs lillys --lines 80"; exit 0 }
 if ($Restart) { Check-SSH; Step "Reiniciando..."; Invoke-Remote "pm2 restart lillys && pm2 list"; exit 0 }
 
 # ── Deploy completo ───────────────────────────────────────────────
@@ -58,7 +58,7 @@ $sizeMB = [math]::Round((Get-Item $TmpTar).Length / 1MB, 1)
 Ok "$sizeMB MB"
 
 Step "Enviando para VPS..."
-scp -i $KeyFile $TmpTar "${VPS}:/tmp/lillys-deploy.tar.gz"
+scp -4 -i $KeyFile $TmpTar "${VPS}:/tmp/lillys-deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) { Remove-Item $TmpTar -EA SilentlyContinue; Fail "scp falhou." }
 Remove-Item $TmpTar -EA SilentlyContinue
 Ok "Enviado."
@@ -90,7 +90,7 @@ pm2 show lillys | grep -E 'name|status|port|restart'
 "@
 
 Step "Buildando e iniciando no VPS..."
-ssh -i $KeyFile -o StrictHostKeyChecking=no $VPS $remoteScript
+ssh -4 -i $KeyFile -o StrictHostKeyChecking=no $VPS $remoteScript
 if ($LASTEXITCODE -ne 0) { Fail "Falha no servidor." }
 
 Ok "Deploy finalizado. Acesse: https://lilly.upflu.digital"
