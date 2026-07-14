@@ -41,3 +41,9 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# sessão de login do TikTok (agente de vídeo) — nunca commitar
+.auth/
+
+# vídeos gerados pelo agente de vídeo
+/public/videos/

@@ -1,4 +1,8 @@
 import { createServiceClient } from "@/lib/supabase-service";
+import { generateVideo } from "@/lib/video-agent";
+import { postToTikTok } from "@/lib/tiktok-post";
+import { sendToAdmin } from "@/lib/whatsapp";
+import path from "path";
 import type OpenAI from "openai";
 
 function fmt(n: number) {
@@ -124,6 +128,44 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "add_bill",
+      description: "Cadastra uma conta a pagar (aluguel, luz, assinatura, etc.)",
+      parameters: {
+        type: "object",
+        properties: {
+          description: { type: "string", description: "Nome da conta, ex: Aluguel, Conta de luz" },
+          amount:      { type: "number", description: "Valor em reais" },
+          due_date:    { type: "string", description: "Data de vencimento YYYY-MM-DD" },
+        },
+        required: ["description", "amount", "due_date"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "pay_bill",
+      description: "Marca uma conta a pagar como paga, pelo nome (busca parcial)",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Parte do nome da conta" },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_bills",
+      description: "Lista contas a pagar em aberto",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_status",
       description: "Retorna status completo do dia: tarefas, metas, hábitos",
       parameters: { type: "object", properties: {} },
@@ -163,6 +205,29 @@ export const TOOLS: OpenAI.ChatCompletionTool[] = [
         },
         required: ["query"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_video",
+      description: "Gera um vídeo com IA (Veo 3) a partir de uma descrição, pra revisar e postar no TikTok depois",
+      parameters: {
+        type: "object",
+        properties: {
+          prompt:  { type: "string", description: "Descrição do vídeo a gerar" },
+          caption: { type: "string", description: "Legenda pra usar quando postar no TikTok" },
+        },
+        required: ["prompt", "caption"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "post_video",
+      description: "Publica no TikTok o vídeo mais recente que estiver pronto (status 'ready') pra postar",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -282,6 +347,44 @@ export async function executeTool(name: string, input: ToolInput, userId: string
       return `*Financeiro — ${mes}*\n📈 Entradas: ${fmt(income)}\n📉 Saídas: ${fmt(spent)}\n💵 Saldo: ${fmt(income - spent)}`;
     }
 
+    case "add_bill": {
+      const { description, amount, due_date } = input as {
+        description: string; amount: number; due_date: string;
+      };
+      const { error } = await supabase.from("finance_entries").insert({
+        type: "conta", amount, description, category: "outros", date: due_date, user_id: userId,
+      });
+      if (error) return `Erro: ${error.message}`;
+      return `Conta "${description}" (${fmt(amount)}, vence ${due_date}) cadastrada.`;
+    }
+
+    case "pay_bill": {
+      const { query } = input as { query: string };
+      const { data: found } = await supabase
+        .from("finance_entries")
+        .select("id,description,amount")
+        .eq("user_id", userId)
+        .eq("type", "conta")
+        .ilike("description", `%${query}%`)
+        .limit(1)
+        .single();
+      if (!found) return `Não encontrei conta com "${query}" em aberto.`;
+      await supabase.from("finance_entries").update({ type: "saida", date: today }).eq("id", found.id);
+      return `Conta "${found.description}" (${fmt(Number(found.amount))}) marcada como paga.`;
+    }
+
+    case "get_bills": {
+      const { data } = await supabase
+        .from("finance_entries")
+        .select("description,amount,date")
+        .eq("user_id", userId)
+        .eq("type", "conta")
+        .order("date", { ascending: true });
+      if (!data?.length) return "Nenhuma conta a pagar em aberto.";
+      const lines = data.map((c) => `• ${c.description} — ${fmt(Number(c.amount))} (vence ${c.date})`);
+      return `*${data.length} conta(s) a pagar:*\n${lines.join("\n")}`;
+    }
+
     case "get_status": {
       const [{ count: tasks }, { count: pending }, { data: goals }] = await Promise.all([
         supabase.from("tasks").select("*", { count: "exact", head: true }).eq("user_id", userId).eq("completed", false).eq("type", "task"),
@@ -340,6 +443,52 @@ export async function executeTool(name: string, input: ToolInput, userId: string
       if (!found) return `Não encontrei meta com "${query}" em aberto hoje.`;
       await supabase.from("goals").update({ completed: true }).eq("id", found.id);
       return `Meta "${found.title}" concluída. ✅`;
+    }
+
+    case "create_video": {
+      const { prompt, caption } = input as { prompt: string; caption: string };
+      const { data: draft, error } = await supabase
+        .from("video_drafts")
+        .insert({ prompt, caption, status: "generating", user_id: userId })
+        .select("id")
+        .single();
+      if (error || !draft) return `Erro ao criar rascunho: ${error?.message}`;
+
+      // Roda em background — PM2 mantém o processo vivo, então isso completa
+      // mesmo depois da resposta do webhook já ter sido enviada.
+      generateVideo(draft.id, prompt)
+        .then(async (filePath) => {
+          await supabase.from("video_drafts").update({ status: "ready", file_path: filePath }).eq("id", draft.id);
+          await sendToAdmin(`🎬 Vídeo pronto pra revisar: https://lilly.upflu.digital${filePath}\n\nManda "postar" quando quiser publicar no TikTok.`);
+        })
+        .catch(async (err) => {
+          await supabase.from("video_drafts").update({ status: "failed", error: String(err) }).eq("id", draft.id);
+          await sendToAdmin(`❌ Falha ao gerar vídeo: ${String(err)}`);
+        });
+
+      return `Gerando vídeo... aviso por aqui quando estiver pronto pra revisar (leva 1-3min).`;
+    }
+
+    case "post_video": {
+      const { data: draft } = await supabase
+        .from("video_drafts")
+        .select("id,file_path,caption")
+        .eq("user_id", userId)
+        .eq("status", "ready")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+      if (!draft?.file_path) return "Nenhum vídeo pronto pra postar no momento.";
+
+      try {
+        const absolutePath = path.join(process.cwd(), "public", draft.file_path.replace(/^\//, ""));
+        await postToTikTok(absolutePath, draft.caption ?? "");
+        await supabase.from("video_drafts").update({ status: "posted" }).eq("id", draft.id);
+        return "Vídeo postado no TikTok. ✅";
+      } catch (err) {
+        await supabase.from("video_drafts").update({ status: "failed", error: String(err) }).eq("id", draft.id);
+        return `Erro ao postar: ${String(err)}`;
+      }
     }
 
     case "save_reflection": {

@@ -55,6 +55,10 @@ Use SOMENTE quando disser explicitamente: "fiz", "terminei", "concluí", "já fi
 - add_expense: "gastei", "paguei", "saiu", "comprei" — também use quando receber uma FOTO de recibo/nota fiscal, extraindo valor e descrição da imagem
 - add_income: "recebi", "entrou", "ganhei", "cliente pagou"
 
+### create_video — "cria um vídeo sobre X", "faz um vídeo de Y" — gera com IA, não posta ainda
+### post_video — "posta o vídeo", "pode postar", "publica" (depois de um create_video) — publica no TikTok o vídeo pronto
+### add_bill / pay_bill / get_bills — "tenho uma conta de X pra pagar", "paguei a conta de X", "quais contas tenho pra pagar"
+
 ### get_tasks — quando perguntar sobre tarefas em aberto, o que tem pra fazer
 ### get_finance — quando perguntar sobre dinheiro, saldo, financeiro do mês
 ### get_status — "como tá o dia", "status"

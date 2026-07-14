@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, CheckSquare, BookOpen, Heart,
   Newspaper, DollarSign, Briefcase, BarChart2, Flame,
-  RefreshCw, Sparkles, MessageCircle, Settings, LogOut, ShieldCheck
+  RefreshCw, Sparkles, MessageCircle, Settings, LogOut, ShieldCheck, Megaphone
 } from "lucide-react";
 
 const nav = [
@@ -19,6 +19,7 @@ const nav = [
   { section: "Profissional" },
   { label: "Projetos", href: "/profissional/projetos", icon: Briefcase },
   { label: "Status Upflu", href: "/profissional/status", icon: BarChart2 },
+  { label: "Campanhas", href: "/profissional/campanhas", icon: Megaphone },
   { section: "Mais" },
   { label: "Hábitos", href: "/habitos", icon: Flame },
   { label: "Revisão Semanal", href: "/revisao", icon: RefreshCw },

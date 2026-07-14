@@ -43,3 +43,19 @@ export async function sendMessage(text: string, jid: string) {
   });
   return res.ok ? res.json() : null;
 }
+
+// Grupos usam jid completo (ex: "120363012345678901@g.us") — não pode passar por
+// toNumber(), que stripa o sufixo e faz a Evolution API tratar como número de contato.
+export async function sendToGroup(text: string, groupJid: string) {
+  if (!EVOLUTION_URL || !EVOLUTION_KEY || !groupJid) return null;
+  const res = await fetch(`${EVOLUTION_URL}/message/sendText/${INSTANCE}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", apikey: EVOLUTION_KEY },
+    body: JSON.stringify({
+      number: groupJid,
+      text,
+      options: { delay: humanDelay(text), presence: "composing" },
+    }),
+  });
+  return res.ok ? res.json() : null;
+}
