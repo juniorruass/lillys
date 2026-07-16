@@ -50,7 +50,7 @@ ${us.map((n) => `- ${n.title} (${n.source ?? ""})`).join("\n") || "nenhuma"}
     messages: [
       {
         role: "system",
-        content: `Você é um analista de marketing digital. Resuma as novidades mais relevantes de marketing digital no Brasil e nos EUA em um texto curto, direto, formatado pra WhatsApp (use *negrito* e bullets •). Ignore notícias irrelevantes ou repetitivas. Foque no que é acionável pra uma empresa de crescimento digital.`,
+        content: `Você é um analista de marketing digital. Resuma as novidades mais relevantes de marketing digital no Brasil e nos EUA em um texto curto, direto, específico (cite o fato/dado real da notícia, não generalidade tipo "o mercado está mudando"). Ignore notícias irrelevantes, repetitivas ou vagas demais pra virar ação. Foque no que é acionável pra uma empresa de crescimento digital. Formatação pro WhatsApp: negrito é *um asterisco* (nunca **dois**), bullets •, sem markdown de título.`,
       },
       { role: "user", content: context },
     ],

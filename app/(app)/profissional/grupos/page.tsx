@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import TopBar from "@/components/layout/TopBar";
-import { Users, RefreshCw, Search, Bot } from "lucide-react";
+import { Users, RefreshCw, Search, Bot, ChevronDown, ChevronUp, CheckCircle2, AlertTriangle } from "lucide-react";
 import Marquee from "@/components/ui/Marquee";
 
 interface Group {
@@ -13,8 +13,15 @@ interface Group {
   knowledge: string | null;
 }
 
+interface Client {
+  name: string;
+  status: string;
+  has_meta: boolean;
+}
+
 export default function GruposPage() {
   const [groups, setGroups] = useState<Group[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [query, setQuery] = useState("");
@@ -26,10 +33,17 @@ export default function GruposPage() {
     setLoading(true);
     setError(false);
     try {
-      const res = await fetch("/api/whatsapp/groups");
-      if (!res.ok) throw new Error();
-      const data = await res.json();
-      setGroups(data.groups ?? []);
+      const [groupsRes, clientsRes] = await Promise.all([
+        fetch("/api/whatsapp/groups"),
+        fetch("/api/clients-list"),
+      ]);
+      if (!groupsRes.ok) throw new Error();
+      const groupsData = await groupsRes.json();
+      setGroups(groupsData.groups ?? []);
+      if (clientsRes.ok) {
+        const clientsData = await clientsRes.json();
+        setClients(clientsData.clients ?? []);
+      }
     } catch {
       setError(true);
     }
@@ -57,6 +71,11 @@ export default function GruposPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jid: g.jid, attend_enabled: next, client_name: g.client_name, knowledge: g.knowledge }),
     });
+    // Ativou agora — abre o editor direto, senão ninguém acha onde configurar
+    if (next) {
+      setOpenJid(g.jid);
+      setDraft({ client_name: g.client_name ?? "", knowledge: g.knowledge ?? "" });
+    }
   }
 
   async function save(g: Group) {
@@ -64,12 +83,14 @@ export default function GruposPage() {
     await fetch("/api/whatsapp/groups", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jid: g.jid, attend_enabled: g.attend_enabled, client_name: draft.client_name, knowledge: draft.knowledge }),
+      body: JSON.stringify({ jid: g.jid, attend_enabled: g.attend_enabled, client_name: draft.client_name || null, knowledge: draft.knowledge }),
     });
-    setGroups((prev) => prev.map((x) => (x.jid === g.jid ? { ...x, client_name: draft.client_name, knowledge: draft.knowledge } : x)));
+    setGroups((prev) => prev.map((x) => (x.jid === g.jid ? { ...x, client_name: draft.client_name || null, knowledge: draft.knowledge } : x)));
     setSaving(false);
     setOpenJid(null);
   }
+
+  const selectedClient = clients.find((c) => c.name === draft.client_name);
 
   return (
     <>
@@ -119,53 +140,93 @@ export default function GruposPage() {
         )}
 
         <div className="space-y-2">
-          {filtered.map((g) => (
-            <div key={g.jid} className={`bg-white rounded-xl border p-3 transition-colors ${g.attend_enabled ? "border-[#00C8FF]" : "border-[#E2E8F0]"}`}>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 min-w-0 cursor-pointer" onClick={() => openEditor(g)}>
-                  <p className="text-sm font-medium text-[#0A1628] truncate">{g.subject || "(sem nome)"}</p>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-[#94A3B8]">{g.size} membros</span>
-                    {g.client_name && (
-                      <span className="text-[10px] bg-[#E0F7FF] text-[#00C8FF] px-1.5 py-0.5 rounded font-semibold">{g.client_name}</span>
-                    )}
-                  </div>
+          {filtered.map((g) => {
+            const groupClient = clients.find((c) => c.name === g.client_name);
+            const open = openJid === g.jid;
+            return (
+              <div key={g.jid} className={`bg-white rounded-xl border p-3 transition-colors ${g.attend_enabled ? "border-[#00C8FF]" : "border-[#E2E8F0]"}`}>
+                <div className="flex items-center gap-3">
+                  <button
+                    className="flex-1 min-w-0 flex items-center gap-2 text-left"
+                    onClick={() => openEditor(g)}
+                  >
+                    {open ? <ChevronUp size={14} className="text-[#94A3B8] shrink-0" /> : <ChevronDown size={14} className="text-[#94A3B8] shrink-0" />}
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[#0A1628] truncate">{g.subject || "(sem nome)"}</p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-[#94A3B8]">{g.size} membros</span>
+                        {g.client_name && (
+                          <span className="text-[10px] bg-[#E0F7FF] text-[#00C8FF] px-1.5 py-0.5 rounded font-semibold flex items-center gap-1">
+                            {g.client_name}
+                            {groupClient?.has_meta ? (
+                              <CheckCircle2 size={10} className="text-green-600" />
+                            ) : (
+                              <AlertTriangle size={10} className="text-orange-500" />
+                            )}
+                          </span>
+                        )}
+                        {g.attend_enabled && !g.knowledge && (
+                          <span className="text-[10px] text-orange-500 font-medium">configurar →</span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => toggleAttend(g)}
+                    className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                      g.attend_enabled ? "bg-[#00C8FF] text-white" : "bg-[#F8FAFB] text-[#64748B] border border-[#E2E8F0]"
+                    }`}
+                  >
+                    <Bot size={12} /> {g.attend_enabled ? "Atendendo" : "Atender"}
+                  </button>
                 </div>
-                <button
-                  onClick={() => toggleAttend(g)}
-                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                    g.attend_enabled ? "bg-[#00C8FF] text-white" : "bg-[#F8FAFB] text-[#64748B] border border-[#E2E8F0]"
-                  }`}
-                >
-                  <Bot size={12} /> {g.attend_enabled ? "Atendendo" : "Atender"}
-                </button>
-              </div>
 
-              {openJid === g.jid && (
-                <div className="mt-3 pt-3 border-t border-[#E2E8F0] space-y-2">
-                  <input
-                    value={draft.client_name}
-                    onChange={(e) => setDraft({ ...draft, client_name: e.target.value })}
-                    placeholder="Nome do cliente (bate com upflu-dashboard, opcional)"
-                    className="w-full text-sm border border-[#E2E8F0] rounded-xl px-3 py-2 outline-none focus:border-[#00C8FF] bg-[#F8FAFB]"
-                  />
-                  <textarea
-                    value={draft.knowledge}
-                    onChange={(e) => setDraft({ ...draft, knowledge: e.target.value })}
-                    placeholder="O que a Lilly deve saber pra responder nesse grupo (serviço contratado, regras, dúvidas comuns...)"
-                    rows={5}
-                    className="w-full text-sm border border-[#E2E8F0] rounded-xl px-3 py-2 outline-none focus:border-[#00C8FF] bg-[#F8FAFB] resize-none"
-                  />
-                  <div className="flex gap-2">
-                    <button onClick={() => save(g)} disabled={saving} className="flex-1 py-2 bg-[#00C8FF] text-white text-sm font-semibold rounded-xl hover:bg-[#0099CC] transition-colors disabled:opacity-50">
-                      {saving ? "Salvando..." : "Salvar"}
-                    </button>
-                    <button onClick={() => setOpenJid(null)} className="px-4 text-sm text-[#64748B]">Fechar</button>
+                {open && (
+                  <div className="mt-3 pt-3 border-t border-[#E2E8F0] space-y-2">
+                    <div>
+                      <label className="text-[10px] font-semibold text-[#64748B] uppercase block mb-1">Cliente (bate com o cadastro de tráfego)</label>
+                      <select
+                        value={draft.client_name}
+                        onChange={(e) => setDraft({ ...draft, client_name: e.target.value })}
+                        className="w-full text-sm border border-[#E2E8F0] rounded-xl px-3 py-2 outline-none focus:border-[#00C8FF] bg-[#F8FAFB]"
+                      >
+                        <option value="">Nenhum (não conecta com relatório de campanha)</option>
+                        {clients.map((c) => (
+                          <option key={c.name} value={c.name}>{c.name}{c.has_meta ? "" : " (sem Meta Ads configurado)"}</option>
+                        ))}
+                      </select>
+                      {draft.client_name && (
+                        <p className={`text-[11px] mt-1 flex items-center gap-1 ${selectedClient?.has_meta ? "text-green-600" : "text-orange-500"}`}>
+                          {selectedClient?.has_meta ? (
+                            <><CheckCircle2 size={11} /> Conectado ao tráfego — relatórios vão puxar dado real do Meta Ads</>
+                          ) : (
+                            <><AlertTriangle size={11} /> Esse cliente ainda não tem Meta Ads configurado no upflu-dashboard — relatório/mensagem diária não vai ter dado de campanha até isso ser resolvido</>
+                          )}
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold text-[#64748B] uppercase block mb-1">O que a Lilly deve saber sobre esse cliente</label>
+                      <textarea
+                        value={draft.knowledge}
+                        onChange={(e) => setDraft({ ...draft, knowledge: e.target.value })}
+                        placeholder="Ex: contratou tráfego pago + site. Prazo de resposta padrão: até 2h úteis. Dúvidas comuns: horário de atendimento, como pausar campanha, etc."
+                        rows={5}
+                        className="w-full text-sm border border-[#E2E8F0] rounded-xl px-3 py-2 outline-none focus:border-[#00C8FF] bg-[#F8FAFB] resize-none"
+                      />
+                      <p className="text-[10px] text-[#94A3B8] mt-1">Enquanto isso ficar vazio, ela só responde com certeza absoluta e escala o resto pra você.</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => save(g)} disabled={saving} className="flex-1 py-2 bg-[#00C8FF] text-white text-sm font-semibold rounded-xl hover:bg-[#0099CC] transition-colors disabled:opacity-50">
+                        {saving ? "Salvando..." : "Salvar"}
+                      </button>
+                      <button onClick={() => setOpenJid(null)} className="px-4 text-sm text-[#64748B]">Fechar</button>
+                    </div>
                   </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </div>
+            );
+          })}
         </div>
       </main>
     </>
