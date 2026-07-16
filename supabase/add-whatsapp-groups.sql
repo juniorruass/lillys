@@ -1,10 +1,14 @@
--- Mapeia clientes (nome usado no upflu-dashboard) para grupos do WhatsApp,
--- usado pelo agente de relatórios (cron/client-reports). Preencher manualmente:
--- jid no formato "123456789-987654321@g.us" (grupo) — pegue no log do webhook
--- ao mandar qualquer mensagem no grupo, ou via GET /chat/findChats da Evolution API.
+-- Grupos do WhatsApp sincronizados ao vivo da Evolution API (GET /api/whatsapp/groups
+-- faz upsert por jid a cada carregamento da página de Grupos). client_name mapeia pro
+-- cliente no upflu-dashboard (usado pelo agente de relatórios, cron/client-reports).
+-- attend_enabled + knowledge alimentam o modo atendente automático no webhook.
 create table if not exists whatsapp_groups (
   id uuid primary key default gen_random_uuid(),
-  client_name text not null unique, -- deve bater com clients.name no upflu-dashboard
-  jid text not null,
+  jid text not null unique,
+  subject text,
+  client_name text,
+  attend_enabled boolean default false,
+  knowledge text,
+  synced_at timestamptz,
   created_at timestamptz default now()
 );

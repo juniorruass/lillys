@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI, { toFile } from "openai";
-import { sendMessage, sendTyping } from "@/lib/whatsapp";
+import { sendMessage, sendToGroup, sendToAdmin, sendTyping } from "@/lib/whatsapp";
 import { TOOLS, executeTool } from "@/lib/agent-tools";
 import { createServiceClient } from "@/lib/supabase-service";
 
@@ -91,6 +91,76 @@ function extractText(msg: Record<string, unknown>): string {
   const ext = m.extendedTextMessage as Record<string, unknown> | undefined;
   if (typeof ext?.text === "string") return ext.text;
   return "";
+}
+
+interface GroupReplyDecision {
+  reply: string;
+  needs_intervention: boolean;
+  summary: string;
+}
+
+// Modo atendente: só age em grupos com attend_enabled=true (configurados em
+// /profissional/grupos). Política conservadora — só responde no grupo se o
+// conhecimento cadastrado cobrir a pergunta com certeza; qualquer dúvida
+// escala pro Junior (needs_intervention), sem responder no grupo.
+async function handleGroupMessage(
+  message: Record<string, unknown>,
+  groupJid: string,
+  supabase: ReturnType<typeof createServiceClient>
+) {
+  const key = message.key as Record<string, unknown>;
+  const text = extractText(message);
+  if (!text) return; // ignora áudio/imagem/etc dentro de grupo por enquanto
+
+  const { data: group } = await supabase
+    .from("whatsapp_groups")
+    .select("subject, client_name, attend_enabled, knowledge")
+    .eq("jid", groupJid)
+    .maybeSingle();
+
+  if (!group?.attend_enabled) return;
+
+  const senderName = (message.pushName as string) || String(key.participant ?? "Cliente");
+  const clientLabel = group.client_name || group.subject || "cliente";
+
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const completion = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    max_tokens: 400,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: `Você é a assistente de atendimento automático da Upflu Agência, atuando no grupo de suporte do cliente "${clientLabel}".
+
+Conhecimento disponível sobre esse cliente/serviço (pode estar vazio):
+"""
+${group.knowledge || "(nenhum conhecimento cadastrado ainda)"}
+"""
+
+Regras:
+- Responda no grupo SOMENTE se o conhecimento acima cobrir a pergunta com certeza absoluta.
+- Se houver qualquer dúvida, reclamação, pedido de cancelamento, desconto, condição especial, ou pergunta fora do conhecimento cadastrado: NÃO responda no grupo (reply = ""), marque needs_intervention = true. O dono da agência (Junior) vai assumir manualmente.
+- Nunca invente informação que não está no conhecimento cadastrado.
+- Tom: profissional, direto, cordial.
+
+Responda em JSON: { "reply": string (mensagem pro grupo, "" se não for responder), "needs_intervention": boolean, "summary": string (1-2 frases resumindo pro Junior o que o cliente pediu/atualizou) }`,
+      },
+      { role: "user", content: `Mensagem de ${senderName} no grupo: ${text}` },
+    ],
+  });
+
+  let decision: GroupReplyDecision;
+  try {
+    decision = JSON.parse(completion.choices[0].message.content ?? "{}");
+  } catch {
+    decision = { reply: "", needs_intervention: true, summary: `Não consegui processar a mensagem de ${senderName}: "${text}"` };
+  }
+
+  if (decision.reply) await sendToGroup(decision.reply, groupJid);
+
+  const prefix = decision.needs_intervention ? "🔔 *Precisa de você* — " : "ℹ️ ";
+  await sendToAdmin(`${prefix}*${clientLabel}*: ${decision.summary}`);
 }
 
 // Normaliza JID para telefone: tenta 13 dígitos (com 9) e 12 (sem 9)
@@ -216,17 +286,23 @@ export async function POST(req: NextRequest) {
     if (key.fromMe === true) return NextResponse.json({ ok: true });
 
     remoteJid = String(key.remoteJid ?? "");
-    if (remoteJid.endsWith("@g.us")) return NextResponse.json({ ok: true });
 
     // Deduplicação por messageId
     const msgId = String(key.id ?? "");
     if (msgId && recentIds.has(msgId)) return NextResponse.json({ ok: true });
     if (msgId) recentIds.set(msgId, Date.now());
 
+    const supabase = createServiceClient();
+
+    // Grupos: só age em grupos com atendimento ativado (ver /profissional/grupos).
+    // Não interfere na conversa pessoal (Lilly no PV) — fluxo totalmente separado.
+    if (remoteJid.endsWith("@g.us")) {
+      await handleGroupMessage(message, remoteJid, supabase);
+      return NextResponse.json({ ok: true });
+    }
+
     const userContent = await buildUserContent(message);
     if (!userContent) return NextResponse.json({ ok: true });
-
-    const supabase = createServiceClient();
 
     // Busca usuário pelo telefone (tenta variantes com/sem 9)
     const phones = phoneVariants(remoteJid);
