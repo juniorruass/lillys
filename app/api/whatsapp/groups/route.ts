@@ -28,14 +28,22 @@ export async function GET() {
   const byJid = new Map((existing ?? []).map((g) => [g.jid, g]));
 
   const now = new Date().toISOString();
-  const rows = evoGroups.map((g) => ({
-    jid: g.id,
-    subject: g.subject,
-    client_name: byJid.get(g.id)?.client_name ?? null,
-    attend_enabled: byJid.get(g.id)?.attend_enabled ?? false,
-    knowledge: byJid.get(g.id)?.knowledge ?? null,
-    synced_at: now,
-  }));
+  const rows = evoGroups.map((g) => {
+    const prev = byJid.get(g.id);
+    return {
+      jid: g.id,
+      subject: g.subject,
+      client_name: prev?.client_name ?? null,
+      attend_enabled: prev?.attend_enabled ?? false,
+      knowledge: prev?.knowledge ?? null,
+      daily_bom_dia: prev?.daily_bom_dia ?? true,
+      daily_pergunta: prev?.daily_pergunta ?? true,
+      daily_metricas: prev?.daily_metricas ?? true,
+      daily_relatorios: prev?.daily_relatorios ?? true,
+      daily_lembretes: prev?.daily_lembretes ?? true,
+      synced_at: now,
+    };
+  });
 
   await supabase.from("whatsapp_groups").upsert(rows, { onConflict: "jid" });
 
@@ -47,13 +55,23 @@ export async function GET() {
 }
 
 export async function PATCH(req: NextRequest) {
-  const { jid, client_name, attend_enabled, knowledge } = await req.json();
+  const {
+    jid, client_name, attend_enabled, knowledge,
+    daily_bom_dia, daily_pergunta, daily_metricas, daily_relatorios, daily_lembretes,
+  } = await req.json();
   if (!jid) return NextResponse.json({ error: "jid obrigatório" }, { status: 400 });
 
   const supabase = await createClient();
   const { error } = await supabase
     .from("whatsapp_groups")
-    .update({ client_name, attend_enabled, knowledge })
+    .update({
+      client_name, attend_enabled, knowledge,
+      ...(daily_bom_dia !== undefined && { daily_bom_dia }),
+      ...(daily_pergunta !== undefined && { daily_pergunta }),
+      ...(daily_metricas !== undefined && { daily_metricas }),
+      ...(daily_relatorios !== undefined && { daily_relatorios }),
+      ...(daily_lembretes !== undefined && { daily_lembretes }),
+    })
     .eq("jid", jid);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

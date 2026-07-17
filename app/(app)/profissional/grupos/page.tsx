@@ -11,7 +11,22 @@ interface Group {
   client_name: string | null;
   attend_enabled: boolean;
   knowledge: string | null;
+  daily_bom_dia: boolean;
+  daily_pergunta: boolean;
+  daily_metricas: boolean;
+  daily_relatorios: boolean;
+  daily_lembretes: boolean;
 }
+
+type DailyKey = "daily_bom_dia" | "daily_pergunta" | "daily_metricas" | "daily_relatorios" | "daily_lembretes";
+
+const DAILY_TOGGLES: { key: DailyKey; label: string }[] = [
+  { key: "daily_bom_dia", label: "Bom dia" },
+  { key: "daily_pergunta", label: "Pergunta" },
+  { key: "daily_metricas", label: "Métricas" },
+  { key: "daily_relatorios", label: "Relatórios" },
+  { key: "daily_lembretes", label: "Lembretes" },
+];
 
 interface Client {
   name: string;
@@ -26,7 +41,10 @@ export default function GruposPage() {
   const [error, setError] = useState(false);
   const [query, setQuery] = useState("");
   const [openJid, setOpenJid] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ client_name: string; knowledge: string }>({ client_name: "", knowledge: "" });
+  const [draft, setDraft] = useState<{
+    client_name: string; knowledge: string;
+    daily_bom_dia: boolean; daily_pergunta: boolean; daily_metricas: boolean; daily_relatorios: boolean; daily_lembretes: boolean;
+  }>({ client_name: "", knowledge: "", daily_bom_dia: true, daily_pergunta: true, daily_metricas: true, daily_relatorios: true, daily_lembretes: true });
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -58,9 +76,18 @@ export default function GruposPage() {
     return groups.filter((g) => g.subject?.toLowerCase().includes(q));
   }, [groups, query]);
 
+  function draftFrom(g: Group) {
+    return {
+      client_name: g.client_name ?? "", knowledge: g.knowledge ?? "",
+      daily_bom_dia: g.daily_bom_dia ?? true, daily_pergunta: g.daily_pergunta ?? true,
+      daily_metricas: g.daily_metricas ?? true, daily_relatorios: g.daily_relatorios ?? true,
+      daily_lembretes: g.daily_lembretes ?? true,
+    };
+  }
+
   function openEditor(g: Group) {
     setOpenJid(g.jid === openJid ? null : g.jid);
-    setDraft({ client_name: g.client_name ?? "", knowledge: g.knowledge ?? "" });
+    setDraft(draftFrom(g));
   }
 
   async function toggleAttend(g: Group) {
@@ -74,7 +101,7 @@ export default function GruposPage() {
     // Ativou agora — abre o editor direto, senão ninguém acha onde configurar
     if (next) {
       setOpenJid(g.jid);
-      setDraft({ client_name: g.client_name ?? "", knowledge: g.knowledge ?? "" });
+      setDraft(draftFrom(g));
     }
   }
 
@@ -83,9 +110,17 @@ export default function GruposPage() {
     await fetch("/api/whatsapp/groups", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jid: g.jid, attend_enabled: g.attend_enabled, client_name: draft.client_name || null, knowledge: draft.knowledge }),
+      body: JSON.stringify({
+        jid: g.jid, attend_enabled: g.attend_enabled, client_name: draft.client_name || null, knowledge: draft.knowledge,
+        daily_bom_dia: draft.daily_bom_dia, daily_pergunta: draft.daily_pergunta, daily_metricas: draft.daily_metricas,
+        daily_relatorios: draft.daily_relatorios, daily_lembretes: draft.daily_lembretes,
+      }),
     });
-    setGroups((prev) => prev.map((x) => (x.jid === g.jid ? { ...x, client_name: draft.client_name || null, knowledge: draft.knowledge } : x)));
+    setGroups((prev) => prev.map((x) => (x.jid === g.jid ? {
+      ...x, client_name: draft.client_name || null, knowledge: draft.knowledge,
+      daily_bom_dia: draft.daily_bom_dia, daily_pergunta: draft.daily_pergunta, daily_metricas: draft.daily_metricas,
+      daily_relatorios: draft.daily_relatorios, daily_lembretes: draft.daily_lembretes,
+    } : x)));
     setSaving(false);
     setOpenJid(null);
   }
@@ -215,6 +250,26 @@ export default function GruposPage() {
                         className="w-full text-sm border border-[#E2E8F0] rounded-xl px-3 py-2 outline-none focus:border-[#00C8FF] bg-[#F8FAFB] resize-none"
                       />
                       <p className="text-[10px] text-[#94A3B8] mt-1">Enquanto isso ficar vazio, ela só responde com certeza absoluta e escala o resto pra você.</p>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold text-[#64748B] uppercase block mb-1">Mensagem diária inclui</label>
+                      <div className="flex flex-wrap gap-2">
+                        {DAILY_TOGGLES.map((t) => {
+                          const checked = draft[t.key];
+                          return (
+                            <button
+                              key={t.key}
+                              type="button"
+                              onClick={() => setDraft({ ...draft, [t.key]: !checked })}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                                checked ? "bg-[#00C8FF] text-white border-[#00C8FF]" : "bg-[#F8FAFB] text-[#94A3B8] border-[#E2E8F0]"
+                              }`}
+                            >
+                              {t.label}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <button onClick={() => save(g)} disabled={saving} className="flex-1 py-2 bg-[#00C8FF] text-white text-sm font-semibold rounded-xl hover:bg-[#0099CC] transition-colors disabled:opacity-50">

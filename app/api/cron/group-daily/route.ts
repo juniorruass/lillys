@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient();
   const { data: groups } = await supabase
     .from("whatsapp_groups")
-    .select("jid, subject, client_name, knowledge")
+    .select("jid, subject, client_name, knowledge, daily_bom_dia, daily_pergunta, daily_metricas, daily_relatorios, daily_lembretes")
     .eq("attend_enabled", true);
 
   if (!groups?.length) return NextResponse.json({ ok: true, sent: 0 });
@@ -46,6 +46,15 @@ export async function GET(req: NextRequest) {
   let sent = 0;
 
   for (const group of groups) {
+    const themes: string[] = [];
+    if (group.daily_bom_dia) themes.push("Saudação de bom dia");
+    if (group.daily_pergunta) themes.push("Uma pergunta rápida de acompanhamento (ex: feedback, pendência do cliente)");
+    if (group.daily_metricas) themes.push("Destaque rápido de métrica da campanha (se houver dado disponível)");
+    if (group.daily_relatorios) themes.push("Menção objetiva ao andamento/status do relatório de campanha");
+    if (group.daily_lembretes) themes.push("Lembrete relevante pro cliente, se houver algo pendente no conhecimento cadastrado");
+
+    if (!themes.length) continue; // Junior desativou todos os temas pra esse grupo
+
     const clientLabel = group.client_name || group.subject || "cliente";
     const meta = clientsMeta.find((c) => c.name === group.client_name && !c.error);
     const metaLine = meta
@@ -58,9 +67,11 @@ export async function GET(req: NextRequest) {
       messages: [
         {
           role: "system",
-          content: `Você é a assistente da Upflu Agência no grupo de suporte do cliente "${clientLabel}". Escreva UMA mensagem curta de bom dia pra esse grupo, natural e profissional (não robótica), que pode incluir: uma atualização, uma sugestão de melhoria, ou uma pergunta rápida de acompanhamento — varie o foco a cada dia, não repita sempre a mesma estrutura.
+          content: `Você é a assistente da Upflu Agência no grupo de suporte do cliente "${clientLabel}". Escreva UMA mensagem curta pra esse grupo hoje, natural e profissional (não robótica), cobrindo SOMENTE os temas abaixo que o Junior decidiu deixar ativos (não invente outros, não pule os que estão na lista se houver informação pra usar):
 
-Seja específico, não genérico: se houver conhecimento cadastrado ou dado de campanha, use eles pra dizer algo concreto (nome de campanha, número, ação pendente) em vez de frase vaga tipo "tudo bem por aí?" ou "como estão as coisas?". Se não tiver nada específico pra dizer, prefira uma mensagem curta e direta a encher linguiça.
+${themes.map((t) => `- ${t}`).join("\n")}
+
+Seja específico, não genérico: se houver conhecimento cadastrado ou dado de campanha, use eles pra dizer algo concreto (nome de campanha, número, ação pendente) em vez de frase vaga tipo "tudo bem por aí?" ou "como estão as coisas?". Se um tema da lista não tiver informação suficiente pra ser específico, pode omitir esse tema pontualmente, mas não invente dado.
 
 Formatação pro WhatsApp: negrito é *um asterisco* (nunca **dois**), sem markdown de título (#), sem link em colchetes. Máximo 4 linhas. No máximo 1-2 emojis.
 

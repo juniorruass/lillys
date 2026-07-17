@@ -100,6 +100,8 @@ interface GroupReplyDecision {
 }
 
 const GROUP_HISTORY_LIMIT = 10;
+const GROUP_RATE_LIMIT = 10; // máx. de mensagens processadas por hora, por grupo
+const GROUP_MUTE_MINUTES = 60;
 
 // Modo atendente: só age em grupos com attend_enabled=true (configurados em
 // /profissional/grupos). Política conservadora — só responde no grupo se o
@@ -114,7 +116,7 @@ async function handleGroupMessage(
 
   const { data: group } = await supabase
     .from("whatsapp_groups")
-    .select("subject, client_name, attend_enabled, knowledge")
+    .select("subject, client_name, attend_enabled, knowledge, muted_until")
     .eq("jid", groupJid)
     .maybeSingle();
 
@@ -125,6 +127,28 @@ async function handleGroupMessage(
 
   const senderName = (message.pushName as string) || String(key.participant ?? "Cliente");
   const clientLabel = group.client_name || group.subject || "cliente";
+
+  // Silenciado por excesso de mensagens — só registra histórico, não processa.
+  if (group.muted_until && new Date(group.muted_until) > new Date()) {
+    await supabase.from("group_chat_history").insert({ jid: groupJid, role: "user", content: userContent.displayText });
+    return;
+  }
+
+  const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { count: recentCount } = await supabase
+    .from("group_chat_history")
+    .select("id", { count: "exact", head: true })
+    .eq("jid", groupJid)
+    .eq("role", "user")
+    .gte("created_at", hourAgo);
+
+  if ((recentCount ?? 0) >= GROUP_RATE_LIMIT) {
+    const mutedUntil = new Date(Date.now() + GROUP_MUTE_MINUTES * 60 * 1000).toISOString();
+    await supabase.from("whatsapp_groups").update({ muted_until: mutedUntil }).eq("jid", groupJid);
+    await supabase.from("group_chat_history").insert({ jid: groupJid, role: "user", content: userContent.displayText });
+    await sendToAdmin(`🔇 *${clientLabel}*: grupo passou de ${GROUP_RATE_LIMIT} mensagens na última hora — atendimento automático pausado por ${GROUP_MUTE_MINUTES}min. Mensagens continuam sendo registradas, só não processadas.`);
+    return;
+  }
 
   const { data: history } = await supabase
     .from("group_chat_history")
