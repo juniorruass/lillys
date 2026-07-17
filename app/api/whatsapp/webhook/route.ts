@@ -99,6 +99,8 @@ interface GroupReplyDecision {
   summary: string;
 }
 
+const GROUP_HISTORY_LIMIT = 10;
+
 // Modo atendente: só age em grupos com attend_enabled=true (configurados em
 // /profissional/grupos). Política conservadora — só responde no grupo se o
 // conhecimento cadastrado cobrir a pergunta com certeza; qualquer dúvida
@@ -109,8 +111,6 @@ async function handleGroupMessage(
   supabase: ReturnType<typeof createServiceClient>
 ) {
   const key = message.key as Record<string, unknown>;
-  const text = extractText(message);
-  if (!text) return; // ignora áudio/imagem/etc dentro de grupo por enquanto
 
   const { data: group } = await supabase
     .from("whatsapp_groups")
@@ -120,8 +120,26 @@ async function handleGroupMessage(
 
   if (!group?.attend_enabled) return;
 
+  const userContent = await buildUserContent(message);
+  if (!userContent) return; // tipo de mensagem não suportado (sticker, documento, etc.)
+
   const senderName = (message.pushName as string) || String(key.participant ?? "Cliente");
   const clientLabel = group.client_name || group.subject || "cliente";
+
+  const { data: history } = await supabase
+    .from("group_chat_history")
+    .select("role, content")
+    .eq("jid", groupJid)
+    .order("created_at", { ascending: false })
+    .limit(GROUP_HISTORY_LIMIT);
+
+  const historyMessages = (history ?? [])
+    .reverse()
+    .map((h) => ({ role: h.role as "user" | "assistant", content: h.content }));
+
+  const userMessageContent = typeof userContent.content === "string"
+    ? `Mensagem de ${senderName} no grupo: ${userContent.content}`
+    : [{ type: "text" as const, text: `Mensagem de ${senderName} no grupo:` }, ...userContent.content];
 
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const completion = await openai.chat.completions.create({
@@ -142,12 +160,14 @@ Regras:
 - Responda no grupo SOMENTE se o conhecimento acima cobrir a pergunta com certeza absoluta.
 - Se houver qualquer dúvida, reclamação, pedido de cancelamento, desconto, condição especial, ou pergunta fora do conhecimento cadastrado: NÃO responda no grupo (reply = ""), marque needs_intervention = true. O dono da agência (Junior) vai assumir manualmente.
 - Nunca invente informação que não está no conhecimento cadastrado.
+- Use o histórico da conversa abaixo pra entender contexto (ex: mensagens relacionadas em sequência), mas aplique as mesmas regras de certeza pra decidir se responde.
 - Tom: profissional, direto, cordial. Sem frase de efeito genérica — responda o que foi perguntado, sem enrolação.
 - Formatação pro WhatsApp: negrito é *um asterisco* (nunca **dois**), sem markdown de título (#), sem link em colchetes.
 
 Responda em JSON: { "reply": string (mensagem pro grupo, "" se não for responder), "needs_intervention": boolean, "summary": string (1-2 frases resumindo pro Junior o que o cliente pediu/atualizou) }`,
       },
-      { role: "user", content: `Mensagem de ${senderName} no grupo: ${text}` },
+      ...historyMessages,
+      { role: "user", content: userMessageContent },
     ],
   });
 
@@ -155,13 +175,17 @@ Responda em JSON: { "reply": string (mensagem pro grupo, "" se não for responde
   try {
     decision = JSON.parse(completion.choices[0].message.content ?? "{}");
   } catch {
-    decision = { reply: "", needs_intervention: true, summary: `Não consegui processar a mensagem de ${senderName}: "${text}"` };
+    decision = { reply: "", needs_intervention: true, summary: `Não consegui processar a mensagem de ${senderName}: "${userContent.displayText}"` };
   }
 
   if (decision.reply) await sendToGroup(decision.reply, groupJid);
 
   const prefix = decision.needs_intervention ? "🔔 *Precisa de você* — " : "ℹ️ ";
   await sendToAdmin(`${prefix}*${clientLabel}*: ${decision.summary}`);
+
+  const rows = [{ jid: groupJid, role: "user", content: userContent.displayText }];
+  if (decision.reply) rows.push({ jid: groupJid, role: "assistant", content: decision.reply });
+  await supabase.from("group_chat_history").insert(rows);
 }
 
 // Normaliza JID para telefone: tenta 13 dígitos (com 9) e 12 (sem 9)
